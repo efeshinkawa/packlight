@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 
 struct ProcInfo: Identifiable {
@@ -28,6 +29,43 @@ struct ProcInfo: Identifiable {
                       let rss = Int(parts[2]) else { return nil }
                 return ProcInfo(pid: pid, cpu: cpu, rssMB: rss / 1024, args: String(parts[3]))
             }
+    }
+
+    /// The current user's processes with full command lines, read through libproc and
+    /// `KERN_PROCARGS2` instead of spawning `ps`. Other users' processes aren't readable
+    /// without root — fine here, since we could not signal them anyway.
+    static func mine() -> [ProcInfo] {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 64)
+        let n = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        return pids.prefix(Int(max(0, n))).compactMap { pid in
+            guard pid > 0, let args = commandLine(pid) else { return nil }
+            var info = proc_taskinfo()
+            let ok = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, Int32(MemoryLayout<proc_taskinfo>.size)) > 0
+            return ProcInfo(pid: pid, cpu: 0, rssMB: ok ? Int(info.pti_resident_size / 1_048_576) : 0, args: args)
+        }
+    }
+
+    /// argv joined by spaces. KERN_PROCARGS2 layout: argc (Int32), exec path, NUL padding, argv[0..argc].
+    private static func commandLine(_ pid: pid_t) -> String? {
+        var mib = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buf = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return nil }
+        let argc = buf.withUnsafeBytes { $0.load(as: Int32.self) }
+        var i = MemoryLayout<Int32>.size
+        while i < size && buf[i] != 0 { i += 1 }      // exec path
+        while i < size && buf[i] == 0 { i += 1 }      // padding
+        var args: [String] = []
+        while i < size && args.count < Int(argc) {
+            let start = i
+            while i < size && buf[i] != 0 { i += 1 }
+            args.append(String(decoding: buf[start..<i], as: UTF8.self))
+            i += 1
+        }
+        return args.isEmpty ? nil : args.joined(separator: " ")
     }
 
     static func top(_ n: Int) -> [ProcInfo] {
@@ -162,7 +200,7 @@ enum ModeActions {
         for id in ids {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { continue }
             let prefix = url.path + "/"
-            let procs = ProcInfo.all().filter { $0.args.hasPrefix(prefix) }
+            let procs = ProcInfo.mine().filter { $0.args.hasPrefix(prefix) }
             let apps = await MainActor.run { NSRunningApplication.runningApplications(withBundleIdentifier: id) }
             guard !procs.isEmpty || !apps.isEmpty else { continue }
             await MainActor.run { apps.forEach { $0.terminate() } }
@@ -241,8 +279,8 @@ enum ModeActions {
         let regexes = patterns.compactMap { try? NSRegularExpression(pattern: $0, options: .caseInsensitive) }
         let protected = try? NSRegularExpression(pattern: protectedPattern, options: .caseInsensitive)
         let me = ProcessInfo.processInfo.processIdentifier
-        let targets = ProcInfo.all().filter { p in
-            guard p.pid != me, p.pid > 1, !p.args.hasPrefix("/bin/ps") else { return false }
+        let targets = ProcInfo.mine().filter { p in
+            guard p.pid != me, p.pid > 1 else { return false }
             let range = NSRange(p.args.startIndex..., in: p.args)
             if protected?.firstMatch(in: p.args, range: range) != nil { return false }
             return regexes.contains { $0.firstMatch(in: p.args, range: range) != nil }

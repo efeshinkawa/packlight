@@ -57,10 +57,6 @@ enum Privileged {
         return Shell.run("/usr/bin/sudo", ["-n"] + command.split(separator: " ").map(String.init)).status == 0
     }
 
-    static var lowPowerEnabled: Bool {
-        let out = Shell.run("/usr/bin/pmset", ["-g"]).out
-        return out.split(separator: "\n").contains {
-            $0.contains("lowpowermode") && $0.trimmingCharacters(in: .whitespaces).hasSuffix("1")
-        }
-    }
+    /// Read from the system directly; no `pmset` process per check.
+    static var lowPowerEnabled: Bool { ProcessInfo.processInfo.isLowPowerModeEnabled }
 }
