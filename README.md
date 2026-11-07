@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icon.png" width="128" alt="Packlight icon">
+  <img src="docs/logo.png" width="128" alt="Packlight icon">
 </p>
 
 <h1 align="center">Packlight</h1>
