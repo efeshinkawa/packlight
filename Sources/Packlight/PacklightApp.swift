@@ -5,6 +5,21 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var status: StatusItemController?
 
+    /// Sample settings for the README screenshot, kept in a throwaway suite so the
+    /// user's real settings are neither shown nor changed.
+    private static func demoDefaults() -> UserDefaults {
+        let suite = "io.github.efeshinkawa.packlight.demo"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        d.set("en", forKey: Key.language)
+        d.set("com.logi.ghub", forKey: Key.relaunchApps)
+        d.set("com.apple.dt.Xcode, com.google.android.studio", forKey: Key.appBundleIDs)
+        return d
+    }
+
+    /// A menu bar app never quits because a window closed (snapshot render windows included).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in urls.forEach(AppState.shared.handle) }
     }
@@ -24,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let dir = URL(fileURLWithPath: args[i + 1])
+        NSApp.appearance = NSAppearance(named: .aqua)   // README shots are always light
         Task { @MainActor in
             let state = AppState.shared
             let demo = args.contains("--demo")
@@ -37,7 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             Windows.render(MenuView().environmentObject(state).environmentObject(Insights.shared),
                            to: dir.appending(path: "menu.png"))
-            Windows.render(SettingsView().environmentObject(state).frame(width: 480, height: demo ? 1300 : 900),
+            Windows.render(SettingsView().environmentObject(state).frame(width: 480, height: demo ? 1300 : 900)
+                .defaultAppStorage(demo ? Self.demoDefaults() : .standard),
                            to: dir.appending(path: "settings.png"))
             if demo {
                 Windows.render(AppPickerSheet(existing: [], preset: AppPickerSheet.demoApps,
@@ -63,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum Windows {
     enum Kind { case settings, insights }
     private static var open: [Kind: NSWindow] = [:]
+    private static var renderWindows: [NSWindow] = []
 
     static func show(_ kind: Kind) {
         if let w = open[kind] {
@@ -103,16 +121,35 @@ enum Windows {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Renders a view to an opaque PNG in light appearance. Opaque matters: a transparent
+    /// background makes the dark text unreadable on dark-mode pages (e.g. GitHub's app).
     static func render(_ view: some View, to url: URL) {
+        let aqua = NSAppearance(named: .aqua)
         let host = NSHostingView(rootView: view)
         host.frame.size = host.fittingSize
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        renderWindows.append(window)   // kept alive until the snapshot run exits
         window.contentView = host
         window.backgroundColor = .windowBackgroundColor
         host.layoutSubtreeIfNeeded()
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
-        host.cacheDisplay(in: host.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        guard let content = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: content)
+
+        guard let out = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: content.pixelsWide,
+                                         pixelsHigh: content.pixelsHigh, bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return }
+        out.size = content.size   // before creating the context, so it draws at the Retina scale
+        guard let ctx = NSGraphicsContext(bitmapImageRep: out) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = ctx
+        let rect = NSRect(origin: .zero, size: content.size)
+        aqua?.performAsCurrentDrawingAppearance { NSColor.windowBackgroundColor.setFill() }
+        rect.fill()
+        content.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+        try? out.representation(using: .png, properties: [:])?.write(to: url)
     }
 }
 

@@ -17,8 +17,11 @@ struct AppEntry: Identifiable, Hashable {
         return NSWorkspace.shared.icon(for: .application)
     }
 
-    private static let developerDir = Shell.run("/usr/bin/xcode-select", ["-p"]).out
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The selected developer dir, read from xcode-select's symlink. No subprocess: this runs
+    /// inside view bodies, and waiting on a process spins the run loop mid-layout (SwiftUI aborts).
+    private static let developerDir =
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link"))
+        ?? "/Applications/Xcode.app/Contents/Developer"
 
     /// Finds an app by bundle ID, including Simulator, which lives inside Xcode where
     /// Launch Services doesn't always index it.
