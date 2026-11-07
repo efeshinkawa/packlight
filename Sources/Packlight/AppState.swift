@@ -19,6 +19,7 @@ final class AppState: ObservableObject {
 
     /// Set by `--snapshot --demo`: sample data, no live refresh.
     private var demo = false
+    private var lowPowerTriggered = false
     private var monitor: PowerMonitor?
     private var pendingTask: Task<Void, Never>?
     private var refreshTimer: Timer?
@@ -61,6 +62,7 @@ final class AppState: ObservableObject {
     private func powerChanged(_ state: PowerState) {
         let was = power.onAC
         power = state
+        if state.onAC != was { applyLowPowerPolicy(onAC: state.onAC) }
         guard state.onAC != was, UserDefaults.standard.bool(forKey: Key.autoSwitch) else { return }
 
         if !state.onAC && mode == .home {
@@ -75,6 +77,30 @@ final class AppState: ObservableObject {
             cancelPending()
             if mode == .away { switchTo(.home) }
         }
+    }
+
+    /// "Whenever unplugged" turns Low Power on right away; plugging in turns it off if asked to.
+    private func applyLowPowerPolicy(onAC: Bool) {
+        let d = UserDefaults.standard
+        if !onAC && LowPowerPolicy.current == .battery {
+            Task.detached { Privileged.sudo("/usr/bin/pmset -a lowpowermode 1") }
+            lowPowerOn = true
+        } else if onAC && d.bool(forKey: Key.lowPowerOffAtHome) && Privileged.lowPowerEnabled {
+            Task.detached { Privileged.sudo("/usr/bin/pmset -a lowpowermode 0") }
+            lowPowerOn = false
+        }
+    }
+
+    /// Called by Insights on every reading: "below N%" turns Low Power on once per unplugged stretch.
+    func batteryReading(percent: Int, onAC: Bool) {
+        guard !demo else { return }
+        if onAC { lowPowerTriggered = false; return }
+        guard LowPowerPolicy.current == .below, !lowPowerTriggered,
+              percent <= UserDefaults.standard.integer(forKey: Key.lowPowerThreshold),
+              !Privileged.lowPowerEnabled else { return }
+        lowPowerTriggered = true
+        Task.detached { Privileged.sudo("/usr/bin/pmset -a lowpowermode 1") }
+        lowPowerOn = true
     }
 
     func cancelPending() {
@@ -183,9 +209,16 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Quits the app politely when the row is an app (so it can ask to save);
+    /// otherwise sends SIGTERM to every process in the row.
     func kill(_ p: ProcInfo) {
-        Darwin.kill(p.pid, SIGTERM)
-        topProcs.removeAll { $0.pid == p.pid }
+        if let path = p.appPath,
+           let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == path }) {
+            app.terminate()
+        } else {
+            (p.pids.isEmpty ? [p.pid] : p.pids).forEach { Darwin.kill($0, SIGTERM) }
+        }
+        topProcs.removeAll { $0.id == p.id }
     }
 
     // MARK: Setup

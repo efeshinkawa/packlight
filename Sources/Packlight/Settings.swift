@@ -18,7 +18,10 @@ enum Key {
     static let clearNpm = "clearNpm"
     static let brewCleanup = "brewCleanup"
     static let purgeRAM = "purgeRAM"
-    static let lowPower = "lowPower"
+    static let lowPower = "lowPower"            // pre-1.1: replaced by lowPowerPolicy
+    static let lowPowerPolicy = "lowPowerPolicy"
+    static let lowPowerThreshold = "lowPowerThreshold"
+    static let lowPowerOffAtHome = "lowPowerOffAtHome"
     static let language = "language"
     static let relaunchApps = "relaunchApps"
     static let relaunchPending = "relaunchPending"
@@ -31,7 +34,7 @@ enum Key {
         language, relaunchApps,
         autoSwitch, graceSeconds, quitApps, appBundleIDs, shutdownSims, killDev, extraPatterns,
         stopBrew, clearDerivedData, clearSimCaches, clearXcodeCaches, clearNpm, brewCleanup,
-        purgeRAM, lowPower,
+        purgeRAM, lowPowerPolicy, lowPowerThreshold, lowPowerOffAtHome,
     ]
 
     static func registerDefaults() {
@@ -54,15 +57,34 @@ enum Key {
             clearNpm: false,
             brewCleanup: false,
             purgeRAM: true,
-            lowPower: true,
+            lowPowerPolicy: LowPowerPolicy.away.rawValue,
+            lowPowerThreshold: 30,
+            lowPowerOffAtHome: true,
         ])
         // Registered defaults aren't visible to `defaults read`; write them out once
         // so the Raycast extension sees real values.
         let d = UserDefaults.standard
         let stored = Bundle.main.bundleIdentifier.flatMap { d.persistentDomain(forName: $0) } ?? [:]
+        // Someone who had switched the old Low Power toggle off keeps it off.
+        if stored[lowPowerPolicy] == nil, stored[lowPower] as? Bool == false {
+            d.set(LowPowerPolicy.never.rawValue, forKey: lowPowerPolicy)
+        }
         for key in settable where stored[key] == nil {
             d.set(d.object(forKey: key), forKey: key)
         }
+    }
+}
+
+/// When Packlight turns on macOS Low Power Mode.
+enum LowPowerPolicy: String, CaseIterable, Identifiable {
+    case away       // with Away mode
+    case battery    // whenever unplugged
+    case below      // on battery below a chosen percentage
+    case never
+    var id: String { rawValue }
+
+    static var current: LowPowerPolicy {
+        LowPowerPolicy(rawValue: UserDefaults.standard.string(forKey: Key.lowPowerPolicy) ?? "") ?? .away
     }
 }
 

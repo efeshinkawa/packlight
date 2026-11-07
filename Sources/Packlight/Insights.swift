@@ -239,6 +239,7 @@ final class Insights: ObservableObject {
         guard !demo, let b = BatteryReading.read() else { return }
         battery = b
         stats = SystemStats.read()
+        AppState.shared.batteryReading(percent: b.percent, onAC: b.onAC)
 
         // Watts: EWMA of instant draw, blended with the real energy drop over the last 30 min,
         // which is steadier than any single reading.

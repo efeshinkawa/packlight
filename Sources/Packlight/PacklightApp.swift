@@ -1,7 +1,10 @@
 import AppKit
+import Combine
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var status: StatusItemController?
+
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in urls.forEach(AppState.shared.handle) }
     }
@@ -16,7 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .write(to: URL(fileURLWithPath: args[i + 1]))
             exit(0)
         }
-        guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
+        guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else {
+            MainActor.assumeIsolated { status = StatusItemController() }
+            return
+        }
         let dir = URL(fileURLWithPath: args[i + 1])
         Task { @MainActor in
             let state = AppState.shared
@@ -31,8 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             Windows.render(MenuView().environmentObject(state).environmentObject(Insights.shared),
                            to: dir.appending(path: "menu.png"))
-            Windows.render(SettingsView().environmentObject(state).frame(width: 480, height: 900),
+            Windows.render(SettingsView().environmentObject(state).frame(width: 480, height: demo ? 1300 : 900),
                            to: dir.appending(path: "settings.png"))
+            if demo {
+                Windows.render(AppPickerSheet(existing: [], preset: AppPickerSheet.demoApps,
+                                              selected: ["com.apple.Music", "com.apple.Photos"]) { _ in },
+                               to: dir.appending(path: "app-picker.png"))
+            }
             Windows.render(InsightsView().environmentObject(state).environmentObject(Insights.shared)
                 .frame(width: 560, height: demo ? 1180 : 980), to: dir.appending(path: "insights.png"))
             if demo {
@@ -105,20 +116,60 @@ enum Windows {
     }
 }
 
+/// The menu bar icon and its panel. An NSPopover (rather than MenuBarExtra) because it
+/// resizes with its content — MenuBarExtra windows keep their first height and leave a gap.
+@MainActor
+final class StatusItemController: NSObject, NSPopoverDelegate {
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let popover = NSPopover()
+    private var observers: [AnyCancellable] = []
+
+    override init() {
+        super.init()
+        let host = NSHostingController(rootView: MenuView()
+            .environmentObject(AppState.shared)
+            .environmentObject(Insights.shared))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        popover.behavior = .transient
+        popover.delegate = self
+        item.button?.target = self
+        item.button?.action = #selector(toggle)
+        item.button?.setAccessibilityLabel("Packlight")
+        updateIcon()
+        observers.append(AppState.shared.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateIcon() }
+        })
+    }
+
+    private func updateIcon() {
+        let s = AppState.shared
+        item.button?.image = MenuBarIcon.image(mode: s.mode, busy: s.busy, pending: s.pendingAway != nil)
+    }
+
+    @objc private func toggle() {
+        guard let button = item.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            // Refresh first so the panel opens at its final size.
+            AppState.shared.panelOpened()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        AppState.shared.panelClosed()
+    }
+}
+
 @main
 struct PacklightApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var state = AppState.shared
-    @StateObject private var insights = Insights.shared
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuView()
-                .environmentObject(state)
-                .environmentObject(insights)
-        } label: {
-            Image(nsImage: MenuBarIcon.image(mode: state.mode, busy: state.busy, pending: state.pendingAway != nil))
-        }
-        .menuBarExtraStyle(.window)
+        // The menu bar item is AppKit (StatusItemController); SwiftUI needs at least one scene.
+        Settings { EmptyView() }
     }
 }

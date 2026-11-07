@@ -24,8 +24,6 @@ struct MenuView: View {
         .padding(14)
         .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { state.panelOpened() }
-        .onDisappear { state.panelClosed() }
         .environment(\.layoutDirection, Lang.current.isRTL ? .rightToLeft : .leftToRight)
     }
 
@@ -66,20 +64,21 @@ struct MenuView: View {
                 vital(T("Draw"), String(format: "%.1f W", w), progress: min(1, w / 20))
             }
             if let m = insights.minutesLeft {
-                vital(T("Left"), Self.duration(m), progress: nil)
+                vital(T("Left"), Self.duration(m), progress: Double(state.power.percent) / 100, invert: true)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func vital(_ title: String, _ value: String, progress: Double?) -> some View {
+    /// `invert`: high is good (battery left), so colors run the other way.
+    private func vital(_ title: String, _ value: String, progress: Double?, invert: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption2).foregroundStyle(.secondary)
             Text(value).font(.caption.monospacedDigit().weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
             if let progress {
                 ProgressView(value: min(1, max(0, progress)))
                     .progressViewStyle(.linear)
-                    .tint(progress > 0.8 ? .red : progress > 0.6 ? .orange : .green)
+                    .tint(Self.tint(invert ? 1 - progress : progress))
                     .controlSize(.mini)
             }
         }
@@ -87,6 +86,8 @@ struct MenuView: View {
         .padding(6)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
     }
+
+    private static func tint(_ load: Double) -> Color { load > 0.8 ? .red : load > 0.6 ? .orange : .green }
 
     static func duration(_ minutes: Double) -> String {
         let m = Int(minutes.rounded())
@@ -203,7 +204,7 @@ struct MenuView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("\(Int(p.cpu))% · \(p.rssMB) MB")
+                    Text(verbatim: "\(Int(p.cpu))% · \(p.rssMB) MB")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .fixedSize()
@@ -251,7 +252,10 @@ struct SettingsView: View {
     @AppStorage(Key.clearNpm) private var clearNpm = false
     @AppStorage(Key.brewCleanup) private var brewCleanup = false
     @AppStorage(Key.purgeRAM) private var purgeRAM = true
-    @AppStorage(Key.lowPower) private var lowPower = true
+    @AppStorage(Key.lowPowerPolicy) private var lowPowerPolicy = LowPowerPolicy.away.rawValue
+    @AppStorage(Key.lowPowerThreshold) private var lowPowerThreshold = 30
+    @AppStorage(Key.lowPowerOffAtHome) private var lowPowerOffAtHome = true
+    @State private var showAdvanced = false
 
     var body: some View {
         Form {
@@ -290,23 +294,44 @@ struct SettingsView: View {
                 .disabled(!autoSwitch)
             }
 
-            Section(T("Close while away, reopen at home")) {
-                listField(T("Apps"),
-                          hint: T("Bundle IDs, comma separated — e.g. com.logi.ghub (Logitech G HUB). Helpers inside the app are closed too; reopened in the background."),
-                          text: $relaunchApps, enabled: true)
+            Section {
+                AppListEditor(ids: $relaunchApps)
+            } header: {
+                Text(T("Close while away, reopen at home"))
+            } footer: {
+                Text(T("For apps you only need at your desk, like mouse or keyboard software. They're closed with their helpers and reopened in the background when you're home."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section(T("When going Away")) {
                 Toggle(T("Quit heavy apps"), isOn: $quitApps)
-                listField(T("Apps to quit"),
-                          hint: T("Bundle IDs, comma separated"),
-                          text: $appBundleIDs, enabled: quitApps)
+                AppListEditor(ids: $appBundleIDs, enabled: quitApps)
                 Toggle(T("Shut down simulators"), isOn: $shutdownSims)
                 Toggle(T("Stop build and dev-server processes"), isOn: $killDev)
-                listField(T("Extra process patterns"),
-                          hint: T("Regex, comma separated — e.g. python.*manage\\.py"),
-                          text: $extraPatterns, enabled: killDev)
                 Toggle(T("Stop brew services (restarted at Home)"), isOn: $stopBrew)
+            }
+
+            Section {
+                Picker(T("Turn on"), selection: $lowPowerPolicy) {
+                    Text(T("With Away mode")).tag(LowPowerPolicy.away.rawValue)
+                    Text(T("Whenever on battery")).tag(LowPowerPolicy.battery.rawValue)
+                    Text(T("When battery is low")).tag(LowPowerPolicy.below.rawValue)
+                    Text(T("Never")).tag(LowPowerPolicy.never.rawValue)
+                }
+                if lowPowerPolicy == LowPowerPolicy.below.rawValue {
+                    Picker(T("Battery below"), selection: $lowPowerThreshold) {
+                        ForEach([10, 20, 30, 40, 50], id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                }
+                Toggle(T("Turn off when plugged in"), isOn: $lowPowerOffAtHome)
+                    .disabled(lowPowerPolicy == LowPowerPolicy.never.rawValue)
+            } header: {
+                Text(T("Low Power Mode"))
+            } footer: {
+                if !state.privilegedInstalled {
+                    Text(T("Needs the password-free helper (General)."))
+                        .font(.caption).foregroundStyle(.orange)
+                }
             }
 
             Section(T("Cleanup")) {
@@ -316,7 +341,28 @@ struct SettingsView: View {
                 Toggle("npm cache", isOn: $clearNpm)
                 Toggle("brew cleanup", isOn: $brewCleanup)
                 Toggle(T("Free inactive RAM (purge)"), isOn: $purgeRAM)
-                Toggle(T("Low Power Mode"), isOn: $lowPower)
+            }
+
+            Section {
+                DisclosureGroup(T("Advanced"), isExpanded: $showAdvanced) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        listField(T("Close while away, reopen at home"), hint: T("Bundle IDs, comma separated"),
+                                  text: $relaunchApps, enabled: true)
+                        listField(T("Apps to quit"), hint: T("Bundle IDs, comma separated; a prefix matches a family (com.jetbrains)"),
+                                  text: $appBundleIDs, enabled: true)
+                        listField(T("Extra process patterns"), hint: T("Regex, comma separated — e.g. python.*manage\\.py"),
+                                  text: $extraPatterns, enabled: killDev)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(T("URL scheme"))
+                            Text(T("Control Packlight from Shortcuts, scripts or Raycast:"))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("packlight://away · home · toggle · cancel · insights · settings\npacklight://set?key=lowPowerPolicy&value=battery")
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.top, 8)
+                }
             }
         }
         .formStyle(.grouped)

@@ -11,6 +11,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/efeshinkawa/packlight/releases/latest/download/Packlight.dmg"><img src="https://img.shields.io/badge/Download%20for%20macOS-Packlight.dmg-2ea44f?style=for-the-badge&logo=apple&logoColor=white" alt="Download Packlight.dmg"></a>
+  <br>
+  <sub>macOS 15 or later · Apple silicon and Intel · free and open source</sub>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/menu.png" width="300" alt="Packlight menu in Home mode">
   &nbsp;&nbsp;
   <img src="docs/screenshots/menu-away.png" width="300" alt="Packlight menu after switching to Away mode">
@@ -34,9 +40,11 @@ Runs when you unplug (after a cancellable countdown) or with one click:
 - **Close while away, reopen at home** — for things you only need at your desk (e.g. mouse/keyboard software like
   Logitech G HUB). The app and every helper process inside it are closed, then restarted in the background through
   the app's own LaunchAgent when you're back.
+- **Low Power Mode, your way** — turn it on with Away mode, whenever you're on battery, or only below a battery
+  level you pick; optionally turn it off again when you plug in.
 - **Pauses Homebrew services** and restarts exactly those at home.
 - **Cleans up** DerivedData, simulator and Xcode caches (npm cache and `brew cleanup` optional).
-- **Frees inactive RAM and turns on Low Power Mode.**
+- **Frees inactive RAM.**
 
 ### Battery insights
 
@@ -57,7 +65,13 @@ Runs when you unplug (after a cancellable countdown) or with one click:
   <img src="docs/screenshots/settings.png" width="420" alt="Settings window">
 </p>
 
-Every step can be switched off, and every list (apps to quit, apps to reopen at home, extra process patterns) is editable.
+Every step can be switched off. Apps are picked from a searchable list — filter by running or background apps,
+sort by name, memory use or running first — no bundle IDs to type. Raw bundle IDs, extra process patterns and the
+URL scheme live under **Advanced** for power users.
+
+<p align="center">
+  <img src="docs/screenshots/app-picker.png" width="420" alt="Choosing apps from a searchable list">
+</p>
 
 ### Languages
 Follows your Mac's language, or pick one in Settings: English, Türkçe, Español, 简体中文, हिन्दी, العربية,
@@ -65,24 +79,38 @@ Français, Português (Brasil), Deutsch, 日本語, Русский, 한국어 (r
 
 ## Install
 
-Requires macOS 15 or later and the Xcode command line tools (`xcode-select --install`).
+### Option 1 — Download (easiest)
+
+1. Download **[Packlight.dmg](https://github.com/efeshinkawa/packlight/releases/latest/download/Packlight.dmg)**
+   from the [latest release](https://github.com/efeshinkawa/packlight/releases/latest).
+2. Open it and drag **Packlight** into **Applications**.
+3. Open Packlight. It isn't notarized by Apple (it's a free open-source project without a paid developer
+   account), so the first time macOS will refuse: go to **System Settings → Privacy & Security**, scroll down and
+   click **Open Anyway**. Or, in Terminal:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Packlight.app
+   ```
+
+### Option 2 — Build from source
+
+Requires the Xcode command line tools (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/efeshinkawa/packlight.git
 cd packlight
-./build.sh
+./build.sh        # builds, installs to ~/Applications and launches
+./make-dmg.sh     # optional: builds build/Packlight.dmg
 ```
 
-`build.sh` builds `Packlight.app`, installs it to `~/Applications` and launches it. The app is ad-hoc signed,
-not notarized: if macOS blocks it, right-click it in Finder → Open once.
+### First run
 
-Then, from the menu bar icon:
+From the menu bar icon:
 
 1. **Install password-free helper** (asks for your admin password once). Low Power Mode and RAM purge need root;
    this writes `/etc/sudoers.d/packlight` (validated with `visudo`) allowing *only* `pmset -a lowpowermode 0|1`
    and `purge` for your user. Remove it any time in Settings.
 2. **Settings → Launch at login.**
-3. Optional: add apps you only use at your desk to **Close while away, reopen at home**.
+3. Optional: add the apps you only use at your desk to **Close while away, reopen at home**.
 
 ## Raycast extension
 
@@ -113,7 +141,7 @@ Use these from Shortcuts, scripts or other launchers:
 | `packlight://away` · `packlight://home` · `packlight://toggle` | switch modes |
 | `packlight://cancel` | cancel a pending unplug countdown |
 | `packlight://insights` · `packlight://settings` | open a window |
-| `packlight://set?key=lowPower&value=false` | change a setting |
+| `packlight://set?key=lowPowerPolicy&value=battery` | change a setting (`away`, `battery`, `below`, `never`) |
 
 ## How the forecast works
 
@@ -139,7 +167,7 @@ swift build
 
 Sources live in `Sources/Packlight`: `Actions.swift` (what the modes do), `Insights.swift` (battery, energy,
 recommendations), `MenuView.swift` / `InsightsView.swift` (UI), `Translations.swift` (all languages),
-`MenuBarIcon.swift` (the icon, drawn in code). Issues and pull requests are welcome — translation fixes especially.
+`AppPicker.swift` (app lists and picker), `MenuBarIcon.swift` (the icon, drawn in code). Issues and pull requests are welcome — translation fixes especially.
 
 ## License
 

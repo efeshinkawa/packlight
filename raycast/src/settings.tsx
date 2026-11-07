@@ -26,7 +26,6 @@ const TOGGLES: { section: string; items: [key: string, title: string][] }[] = [
       ["clearNpm", "npm cache"],
       ["brewCleanup", "brew cleanup"],
       ["purgeRAM", "Free inactive RAM (purge)"],
-      ["lowPower", "Low Power Mode"],
     ],
   },
 ];
@@ -45,6 +44,13 @@ const LANGS: [code: string, name: string][] = [
   ["ja", "日本語"],
   ["ru", "Русский"],
   ["ko", "한국어"],
+];
+
+const POLICIES: [value: string, label: string][] = [
+  ["away", "With Away mode"],
+  ["battery", "Whenever on battery"],
+  ["below", "When battery is low"],
+  ["never", "Never"],
 ];
 
 const SUDOERS = "/etc/sudoers.d/packlight";
@@ -165,6 +171,36 @@ export default function Command() {
             </ActionPanel>
           }
         />
+      </List.Section>
+
+      <List.Section title="Low Power Mode">
+        <List.Item
+          title="Turn on"
+          icon={Icon.Battery}
+          accessories={[{ text: POLICIES.find(([v]) => v === String(s.lowPowerPolicy ?? "away"))?.[1] ?? "With Away mode" }]}
+          actions={
+            <ActionPanel>
+              {POLICIES.map(([value, label]) => (
+                <Action key={value} title={label} icon={value === String(s.lowPowerPolicy ?? "away") ? Icon.Checkmark : Icon.Battery} onAction={() => update("lowPowerPolicy", value)} />
+              ))}
+            </ActionPanel>
+          }
+        />
+        {String(s.lowPowerPolicy) === "below" && (
+          <List.Item
+            title="Battery below"
+            icon={Icon.BatteryCharging}
+            accessories={[{ text: `${Number(s.lowPowerThreshold ?? 30)}%` }]}
+            actions={
+              <ActionPanel>
+                {[10, 20, 30, 40, 50].map((v) => (
+                  <Action key={v} title={`${v}%`} icon={v === Number(s.lowPowerThreshold ?? 30) ? Icon.Checkmark : Icon.Circle} onAction={() => update("lowPowerThreshold", v)} />
+                ))}
+              </ActionPanel>
+            }
+          />
+        )}
+        {toggleItem("lowPowerOffAtHome", "Turn off when plugged in")}
       </List.Section>
 
       {TOGGLES.slice(1).map((group) => (

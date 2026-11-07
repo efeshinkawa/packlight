@@ -7,17 +7,30 @@ struct ProcInfo: Identifiable {
     let cpu: Double
     let rssMB: Int
     let args: String
+    /// Every process grouped into this row (an app and its helpers).
+    var pids: [Int32] = []
     var id: Int32 { pid }
 
     var name: String { Self.displayName(forPath: args.split(separator: " ").first.map(String.init) ?? args) }
 
-    /// Prefers the .app name over a deep helper path.
+    /// The outermost .app this process lives in, if any.
+    var appPath: String? {
+        args.range(of: ".app/").map { String(args[..<$0.lowerBound]) + ".app" }
+    }
+
+    /// Prefers the .app name over a deep helper path, and trims Apple's reverse-DNS
+    /// daemon names ("com.apple.DriverKit-AppleBCMWLAN" → "AppleBCMWLAN").
     static func displayName(forPath exe: String) -> String {
         if let r = exe.range(of: ".app/") {
             let app = exe[..<r.lowerBound]
             return String(app.split(separator: "/").last ?? Substring(exe))
         }
-        return (exe as NSString).lastPathComponent
+        var name = (exe as NSString).lastPathComponent
+        if name.hasPrefix("com.apple.") {
+            name.removeFirst("com.apple.".count)
+            if let dash = name.lastIndex(of: "-") { name = String(name[name.index(after: dash)...]) }
+        }
+        return name
     }
 
     static func all() -> [ProcInfo] {
@@ -68,13 +81,22 @@ struct ProcInfo: Identifiable {
         return args.isEmpty ? nil : args.joined(separator: " ")
     }
 
+    /// Heaviest CPU users, one row per app (helpers summed into their app).
     static func top(_ n: Int) -> [ProcInfo] {
         let me = ProcessInfo.processInfo.processIdentifier
-        return all()
-            .filter { $0.pid != me && $0.cpu >= 1 && !$0.args.hasPrefix("/bin/ps") }
-            .sorted { $0.cpu > $1.cpu }
-            .prefix(n)
-            .map { $0 }
+        let procs = all().filter { $0.pid != me && !$0.args.hasPrefix("/bin/ps") }
+        var groups: [String: ProcInfo] = [:]
+        for p in procs {
+            let key = p.appPath ?? p.name
+            if let g = groups[key] {
+                let lead = p.cpu > g.cpu && p.appPath == nil ? p : g
+                groups[key] = ProcInfo(pid: lead.pid, cpu: g.cpu + p.cpu, rssMB: g.rssMB + p.rssMB,
+                                       args: lead.args, pids: g.pids + [p.pid])
+            } else {
+                groups[key] = ProcInfo(pid: p.pid, cpu: p.cpu, rssMB: p.rssMB, args: p.args, pids: [p.pid])
+            }
+        }
+        return groups.values.filter { $0.cpu >= 1 }.sorted { $0.cpu > $1.cpu }.prefix(n).map { $0 }
     }
 }
 
@@ -159,10 +181,11 @@ enum ModeActions {
         if d.bool(forKey: Key.purgeRAM), Privileged.sudo("/usr/sbin/purge") {
             report.append(T("Freed inactive RAM"))
         }
-        if d.bool(forKey: Key.lowPower), Privileged.sudo("/usr/bin/pmset -a lowpowermode 1") {
+        let policy = LowPowerPolicy.current
+        if policy == .away || policy == .battery, Privileged.sudo("/usr/bin/pmset -a lowpowermode 1") {
             report.append(T("Low Power Mode on"))
         }
-        if !Privileged.isInstalled && (d.bool(forKey: Key.purgeRAM) || d.bool(forKey: Key.lowPower)) {
+        if !Privileged.isInstalled && (d.bool(forKey: Key.purgeRAM) || policy != .never) {
             report.append(T("Skipped RAM / Low Power: install the password-free helper in Settings"))
         }
 
@@ -174,7 +197,8 @@ enum ModeActions {
         let d = UserDefaults.standard
         var report: [String] = []
 
-        if Privileged.sudo("/usr/bin/pmset -a lowpowermode 0") { report.append(T("Low Power Mode off")) }
+        if d.bool(forKey: Key.lowPowerOffAtHome), Privileged.lowPowerEnabled,
+           Privileged.sudo("/usr/bin/pmset -a lowpowermode 0") { report.append(T("Low Power Mode off")) }
 
         if let brew = Shell.brew, let services = d.stringArray(forKey: Key.stoppedBrewServices), !services.isEmpty {
             for name in services { Shell.run(brew, ["services", "start", name]) }
