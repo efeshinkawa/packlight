@@ -1,0 +1,64 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "packlight",
+  "title": "Packlight",
+  "description": "Home / Away modes for developer MacBooks: one switch (or unplugging) closes builds, simulators and background apps, clears caches, turns on Low Power Mode — and brings it all back at home. Includes a battery forecast.",
+  "icon": "icon.png",
+  "author": "efeshinkawa",
+  "platforms": ["macOS"],
+  "categories": ["System", "Developer Tools", "Productivity"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "away",
+      "title": "Go Away",
+      "subtitle": "Packlight",
+      "description": "Close everything heavy, clean up and save battery",
+      "mode": "no-view",
+      "keywords": ["battery", "travel", "unplug", "low power", "disari"]
+    },
+    {
+      "name": "home",
+      "title": "Go Home",
+      "subtitle": "Packlight",
+      "description": "Full power: Low Power off, services and apps back",
+      "mode": "no-view",
+      "keywords": ["power", "charger", "plugged", "ev"]
+    },
+    {
+      "name": "toggle",
+      "title": "Toggle Home / Away",
+      "subtitle": "Packlight",
+      "description": "Switch between Home and Away",
+      "mode": "no-view"
+    },
+    {
+      "name": "forecast",
+      "title": "Battery Forecast",
+      "subtitle": "Packlight",
+      "description": "Time left, power draw, what's draining the battery and what to do",
+      "mode": "view",
+      "keywords": ["battery", "drain", "watts", "time left", "pil"]
+    },
+    {
+      "name": "settings",
+      "title": "Packlight Settings",
+      "subtitle": "Packlight",
+      "description": "Every Home / Away setting",
+      "mode": "view",
+      "keywords": ["preferences", "config", "ayarlar"]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop"
+  }
+}
